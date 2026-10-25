@@ -77,7 +77,14 @@ input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; poin
 .thumb { aspect-ratio: 3 / 4; max-width: 100%; display: grid; place-items: center; background: var(--surface); position: relative; overflow: hidden; }
 .thumb img { position: absolute; inset: 6%; width: 88%; height: 88%; max-width: none; object-fit: contain; transition: transform .2s; }
 .num { position: absolute; top: 6px; left: 6px; font-family: var(--font-data); font-size: 12px; background: var(--ink); color: var(--surface); border-radius: 5px; padding: 1px 6px; }
-.meta { padding: 6px 8px 0; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-height: 40px; padding: 6px 8px 0; border: 0; border-radius: 0;
+  background: transparent; color: var(--ink); font-size: 13px; font-weight: 500; text-align: left; justify-content: flex-start;
+}
+.meta span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta span.auto { color: var(--muted); font-weight: 400; }
+.meta i { font-style: normal; color: var(--accent); font-size: 14px; }
+.rename { margin: 6px 6px 0; width: calc(100% - 12px); font: inherit; font-size: 14px; padding: 8px; min-height: 40px; border-radius: 6px; border: 2px solid var(--accent); background: var(--surface); color: var(--ink); }
 .tools { display: flex; justify-content: space-between; padding: 0 2px 2px; }
 .tools button { flex: 1 1 0; min-height: 44px; min-width: 0; padding: 4px; border-color: transparent; background: transparent; font-size: 18px; line-height: 1; }
 .tools button.del.armed { color: var(--danger); font-size: 13px; }
@@ -142,7 +149,7 @@ footer { color: var(--muted); font-size: 13px; }
       <span>Noch keine Belege. So geht's:</span>
       <ol>
         <li>Jede Rechnung direkt fotografieren, z. B. gleich nach dem Tanken. Die Fotos bleiben in der App gespeichert, bis du sie entfernst.</li>
-        <li>Reihenfolge mit den Pfeilen anpassen, schiefe Fotos drehen.</li>
+        <li>Auf den Namen unter dem Foto tippen, um den Beleg umzubenennen. Reihenfolge mit den Pfeilen anpassen, schiefe Fotos drehen.</li>
         <li>„PDF erstellen“ tippen und die Datei per Mail, WhatsApp oder Outlook teilen.</li>
       </ol>
     </div>
@@ -163,7 +170,7 @@ footer { color: var(--muted); font-size: 13px; }
           <option value="high">Hoch (größere Datei)</option>
         </select>
       </label>
-      <label class="c" for="numbering"><input type="checkbox" id="numbering" checked> Seitenzahl „Beleg 3 / 12“ unten einfügen</label>
+      <label class="c" for="numbering"><input type="checkbox" id="numbering" checked> Seitenzahl und Name unten einfügen („Beleg 3 / 12 · Hotel München“)</label>
     </div>
   </section>
 
@@ -210,7 +217,7 @@ footer { color: var(--muted); font-size: 13px; }
       t.onabort = () => rej(t.error);
     });
   }
-  const putItem = it => tx([STORE], 'readwrite', t => t.objectStore(STORE).put({ id: it.id, blob: it.blob, rot: it.rot, name: it.name })).catch(storeFail);
+  const putItem = it => tx([STORE], 'readwrite', t => t.objectStore(STORE).put({ id: it.id, blob: it.blob, rot: it.rot, name: it.name, renamed: !!it.renamed })).catch(storeFail);
   const delItem = id => tx([STORE], 'readwrite', t => t.objectStore(STORE).delete(id)).catch(storeFail);
   const saveOrder = () => tx([META], 'readwrite', t => t.objectStore(META).put(items.map(i => i.id), 'order')).catch(storeFail);
   const clearAll = () => tx([STORE, META], 'readwrite', t => { t.objectStore(STORE).clear(); t.objectStore(META).clear(); }).catch(storeFail);
@@ -309,8 +316,14 @@ footer { color: var(--muted); font-size: 13px; }
       num.className = 'num'; num.textContent = i + 1;
       thumb.append(img, num);
 
-      const meta = document.createElement('div');
-      meta.className = 'meta'; meta.textContent = it.name; meta.title = it.name;
+      const meta = document.createElement('button');
+      meta.type = 'button'; meta.className = 'meta'; meta.title = 'Umbenennen';
+      meta.setAttribute('aria-label', `Beleg ${i + 1} umbenennen: ${it.name}`);
+      const label = document.createElement('span');
+      label.textContent = it.name; if (!it.renamed) label.className = 'auto';
+      const pen = document.createElement('i'); pen.textContent = '✎'; pen.setAttribute('aria-hidden', 'true');
+      meta.append(label, pen);
+      meta.onclick = () => startRename(it, meta);
 
       const del = btn('✕', 'Entfernen', () => {
         if (!del.classList.contains('armed')) { del.classList.add('armed'); del.textContent = 'Weg?'; setTimeout(() => { del.classList.remove('armed'); del.textContent = '✕'; }, 3000); return; }
@@ -349,6 +362,29 @@ footer { color: var(--muted); font-size: 13px; }
     if (cls) b.className = cls;
     b.onclick = fn; return b;
   }
+  function startRename(it, meta) {
+    const input = document.createElement('input');
+    input.type = 'text'; input.className = 'rename'; input.maxLength = 80;
+    input.id = 'rename-' + it.id; input.enterKeyHint = 'done';
+    input.value = it.renamed ? it.name : '';
+    input.placeholder = 'z. B. Hotel München';
+    input.setAttribute('aria-label', 'Neuer Name');
+    meta.replaceWith(input);
+    input.focus();
+    let done = false;
+    const finish = save => {
+      if (done) return; done = true;
+      const v = input.value.trim();
+      if (save && v && v !== it.name) { it.name = v; it.renamed = true; putItem(it); hideResult(); }
+      render();
+    };
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      if (e.key === 'Escape') finish(false);
+    });
+    input.addEventListener('blur', () => finish(true));
+  }
+
   function move(i, d) {
     const j = i + d; if (j < 0 || j >= items.length) return;
     [items[i], items[j]] = [items[j], items[i]]; saveOrder(); hideResult(); render();
@@ -405,7 +441,8 @@ footer { color: var(--muted); font-size: 13px; }
         doc.addImage(img.data, 'JPEG', (pw - dw) / 2, m + (bh - dh) / 2, dw, dh, undefined, 'FAST');
         if (numbering) {
           doc.setFontSize(9); doc.setTextColor(90);
-          doc.text(`Beleg ${i + 1} / {total}`, pw / 2, ph - 6, { align: 'center' });
+          const label = items[i].renamed ? ` · ${items[i].name}` : '';
+          doc.text(`Beleg ${i + 1} / {total}${label}`, pw / 2, ph - 6, { align: 'center' });
         }
         fill.style.width = `${Math.round((i + 1) / items.length * 100)}%`;
         await new Promise(r => setTimeout(r, 0));

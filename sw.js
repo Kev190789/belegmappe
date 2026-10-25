@@ -1,5 +1,5 @@
 // Offline-Cache für die Belegmappe. Bei Änderungen an den Dateien VERSION erhöhen.
-const VERSION = 'belegmappe-v1';
+const VERSION = 'belegmappe-v2';
 const FILES = [
   './',
   './index.html',
@@ -27,7 +27,7 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   if (e.request.mode === 'navigate') {
     e.respondWith(
-      fetch(e.request)
+      fetch(e.request, { cache: 'no-cache' })
         .then(res => { const copy = res.clone(); caches.open(VERSION).then(c => c.put('./index.html', copy)); return res; })
         .catch(() => caches.match('./index.html'))
     );
