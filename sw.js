@@ -1,5 +1,5 @@
 // Offline-Cache für die Belegmappe. Bei Änderungen an den Dateien VERSION erhöhen.
-const VERSION = 'belegmappe-v2';
+const VERSION = 'belegmappe-v3';
 const FILES = [
   './',
   './index.html',
