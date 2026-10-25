@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Belegmappe</title>
+<meta name="description" content="Rechnungsfotos sammeln und als eine PDF für die Spesenabrechnung speichern.">
+<meta name="theme-color" content="#1f5f8b">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+/* Layout: eine Spalte, Belege als Raster, feste Aktionsleiste unten für den Daumen */
+:root {
+  --bg: #f3f5f7;
+  --surface: #ffffff;
+  --ink: #18222d;
+  --muted: #5b6876;
+  --line: #d9dfe5;
+  --accent: #1f5f8b;
+  --accent-ink: #ffffff;
+  --accent-soft: #e3eef6;
+  --danger: #b3261e;
+  --ok: #2e7d4f;
+  --font-ui: system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-data: ui-monospace, "Roboto Mono", Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11171d; --surface: #1a222b; --ink: #e6ebf0; --muted: #98a6b4; --line: #2c3743;
+    --accent: #6fb0dd; --accent-ink: #0d1a24; --accent-soft: #1d3142; --danger: #f2827a; --ok: #74c69a;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 16px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-top: max(20px, env(safe-area-inset-top, 0px));
+  padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px));
+}
+[hidden] { display: none !important; }
+.wrap { max-width: 880px; margin: 0 auto; display: grid; gap: 18px; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+header h1 { margin: 0; font-size: 1.6rem; font-weight: 700; letter-spacing: -0.01em; }
+header .sub { margin: 0; color: var(--muted); font-size: 14px; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 14px; }
+.panel h2 { margin: 0; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; display: flex; justify-content: space-between; gap: 12px; }
+.panel h2 span { font-family: var(--font-data); text-transform: none; letter-spacing: 0; font-weight: 500; }
+
+button, .btn {
+  font: inherit; font-weight: 600; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  padding: 10px 16px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px;
+  -webkit-tap-highlight-color: transparent;
+}
+button:active, .btn:active { transform: scale(0.98); }
+button:focus-visible, .btn:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.primary:disabled { opacity: .45; cursor: not-allowed; }
+.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+.small { min-height: 40px; padding: 6px 12px; font-size: 14px; }
+input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+.empty { color: var(--muted); display: grid; gap: 6px; }
+.empty ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+@media (max-width: 380px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.card { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg); display: grid; min-width: 0; }
+.card.dragging { opacity: .4; }
+.card.target { outline: 2px solid var(--accent); }
+.thumb { aspect-ratio: 3 / 4; max-width: 100%; display: grid; place-items: center; background: var(--surface); position: relative; overflow: hidden; }
+.thumb img { position: absolute; inset: 6%; width: 88%; height: 88%; max-width: none; object-fit: contain; transition: transform .2s; }
+.num { position: absolute; top: 6px; left: 6px; font-family: var(--font-data); font-size: 12px; background: var(--ink); color: var(--surface); border-radius: 5px; padding: 1px 6px; }
+.meta { padding: 6px 8px 0; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tools { display: flex; justify-content: space-between; padding: 0 2px 2px; }
+.tools button { flex: 1 1 0; min-height: 44px; min-width: 0; padding: 4px; border-color: transparent; background: transparent; font-size: 18px; line-height: 1; }
+.tools button.del.armed { color: var(--danger); font-size: 13px; }
+
+.opts { display: grid; gap: 14px; }
+label.f { display: grid; gap: 4px; font-size: 13px; font-weight: 600; }
+label.f input[type=text], select {
+  font: inherit; font-weight: 400; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); min-height: 48px; width: 100%;
+}
+.suffix { display: flex; align-items: center; gap: 6px; }
+.suffix span { font-family: var(--font-data); color: var(--muted); }
+label.c { display: flex; gap: 10px; align-items: center; font-size: 15px; }
+label.c input { width: 20px; height: 20px; accent-color: var(--accent); }
+
+.status { font-size: 14px; color: var(--muted); min-height: 1.5em; }
+.status.err { color: var(--danger); }
+.status.ok { color: var(--ok); }
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .15s; }
+
+.result { border-color: var(--ok); }
+.result .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.result .file { font-family: var(--font-data); font-size: 14px; word-break: break-all; }
+
+.dock {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+  background: var(--surface); border-top: 1px solid var(--line);
+  padding-top: 12px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.dock .in { max-width: 880px; margin: 0 auto; display: grid; grid-template-columns: auto 1fr 1fr; gap: 10px; }
+.dock .btn, .dock button { min-height: 52px; white-space: nowrap; padding: 10px 12px; }
+footer { color: var(--muted); font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Belegmappe</h1>
+      <p class="sub">Rechnungsfotos sammeln, eine PDF verschicken.</p>
+    </div>
+    <button type="button" class="small" id="install" hidden>App installieren</button>
+  </header>
+
+  <section class="panel result" id="result" hidden aria-labelledby="h-res">
+    <h2 id="h-res">PDF fertig</h2>
+    <div class="file" id="resFile"></div>
+    <div class="btns">
+      <button type="button" class="primary" id="share">Teilen</button>
+      <button type="button" id="download">Speichern</button>
+    </div>
+    <button type="button" class="ghost small" id="newRun">Neue Abrechnung beginnen (alle Belege entfernen)</button>
+  </section>
+
+  <section class="panel" aria-labelledby="h-list">
+    <h2 id="h-list">Belege <span id="count">0 Seiten</span></h2>
+    <div class="empty" id="empty">
+      <span>Noch keine Belege. So geht's:</span>
+      <ol>
+        <li>Jede Rechnung direkt fotografieren, z. B. gleich nach dem Tanken. Die Fotos bleiben in der App gespeichert, bis du sie entfernst.</li>
+        <li>Reihenfolge mit den Pfeilen anpassen, schiefe Fotos drehen.</li>
+        <li>„PDF erstellen“ tippen und die Datei per Mail, WhatsApp oder Outlook teilen.</li>
+      </ol>
+    </div>
+    <div class="grid" id="grid"></div>
+    <span class="status" id="status" role="status"></span>
+    <div class="bar" id="bar" hidden><i id="barfill"></i></div>
+  </section>
+
+  <section class="panel" aria-labelledby="h-pdf">
+    <h2 id="h-pdf">PDF-Einstellungen</h2>
+    <div class="opts">
+      <label class="f" for="fname">Dateiname
+        <span class="suffix"><input type="text" id="fname" autocomplete="off"><span>.pdf</span></span>
+      </label>
+      <label class="f" for="quality">Qualität
+        <select id="quality">
+          <option value="std">Standard (kleine Datei, gut lesbar)</option>
+          <option value="high">Hoch (größere Datei)</option>
+        </select>
+      </label>
+      <label class="c" for="numbering"><input type="checkbox" id="numbering" checked> Seitenzahl „Beleg 3 / 12“ unten einfügen</label>
+    </div>
+  </section>
+
+  <footer>Alles passiert auf diesem Gerät. Fotos und PDFs werden nirgends hochgeladen.</footer>
+</div>
+
+<nav class="dock" aria-label="Aktionen">
+  <div class="in">
+    <label class="btn" for="pick" title="Bilder aus der Galerie">Galerie</label>
+    <label class="btn primary" for="cam">Foto</label>
+    <button type="button" id="make" disabled>PDF erstellen</button>
+  </div>
+  <input type="file" id="pick" accept="image/*" multiple>
+  <input type="file" id="cam" accept="image/*" capture="environment">
+</nav>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const grid = $('grid'), empty = $('empty'), count = $('count'), status = $('status');
+  const make = $('make'), fname = $('fname');
+  let items = [];            // {id, blob, url, rot, name}
+  let dragId = null, lastPdf = null;
+
+  // ---------- Speicher (IndexedDB): Belege überleben Neustart der App ----------
+  const DB_NAME = 'belegmappe', STORE = 'belege', META = 'meta';
+  let dbP = null;
+  function db() {
+    if (!dbP) dbP = new Promise((res, rej) => {
+      const r = indexedDB.open(DB_NAME, 1);
+      r.onupgradeneeded = () => { r.result.createObjectStore(STORE, { keyPath: 'id' }); r.result.createObjectStore(META); };
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    return dbP;
+  }
+  async function tx(stores, mode, fn) {
+    const d = await db();
+    return new Promise((res, rej) => {
+      const t = d.transaction(stores, mode);
+      const out = fn(t);
+      t.oncomplete = () => res(out && out.result !== undefined ? out.result : out);
+      t.onerror = () => rej(t.error);
+      t.onabort = () => rej(t.error);
+    });
+  }
+  const putItem = it => tx([STORE], 'readwrite', t => t.objectStore(STORE).put({ id: it.id, blob: it.blob, rot: it.rot, name: it.name })).catch(storeFail);
+  const delItem = id => tx([STORE], 'readwrite', t => t.objectStore(STORE).delete(id)).catch(storeFail);
+  const saveOrder = () => tx([META], 'readwrite', t => t.objectStore(META).put(items.map(i => i.id), 'order')).catch(storeFail);
+  const clearAll = () => tx([STORE, META], 'readwrite', t => { t.objectStore(STORE).clear(); t.objectStore(META).clear(); }).catch(storeFail);
+  function storeFail(e) { console.error(e); setStatus('Speichern auf dem Gerät hat nicht geklappt. Die Belege gehen beim Schließen der App verloren.', 'err'); }
+
+  async function restore() {
+    try {
+      const d = await db();
+      const [all, order] = await new Promise((res, rej) => {
+        const t = d.transaction([STORE, META], 'readonly');
+        const a = t.objectStore(STORE).getAll(), o = t.objectStore(META).get('order');
+        t.oncomplete = () => res([a.result || [], o.result || []]);
+        t.onerror = () => rej(t.error);
+      });
+      const byId = new Map(all.map(r => [r.id, r]));
+      const ids = [...order.filter(id => byId.has(id)), ...all.map(r => r.id).filter(id => !order.includes(id))];
+      items = ids.map(id => { const r = byId.get(id); return { ...r, url: URL.createObjectURL(r.blob) }; });
+      if (items.length) setStatus(`${items.length} gespeicherte ${items.length === 1 ? 'Beleg' : 'Belege'} geladen.`);
+    } catch (e) { console.error(e); }
+    render();
+  }
+
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+
+  // ---------- Hilfsfunktionen ----------
+  const now = new Date();
+  try { fname.value = localStorage.getItem('fname') || ''; } catch {}
+  if (!fname.value) fname.value = `Spesen_${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  fname.addEventListener('change', () => { try { localStorage.setItem('fname', fname.value); } catch {} });
+
+  function setStatus(msg, kind) {
+    status.textContent = msg || '';
+    status.className = 'status' + (kind ? ' ' + kind : '');
+  }
+  function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+  function loadImage(url) {
+    return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url; });
+  }
+  function canvasBlob(c, q) { return new Promise(r => c.toBlob(r, 'image/jpeg', q)); }
+
+  // Foto verkleinern (max. 3000 px), Drehung aus der Kamera übernehmen, als JPEG speichern
+  async function normalize(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const im = await loadImage(url);
+      const s = Math.min(1, 3000 / Math.max(im.naturalWidth, im.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(im.naturalWidth * s); c.height = Math.round(im.naturalHeight * s);
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(im, 0, 0, c.width, c.height);
+      return await canvasBlob(c, 0.9);
+    } finally { URL.revokeObjectURL(url); }
+  }
+
+  async function addFiles(list) {
+    const files = [...list].filter(f => f.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(f.name));
+    if (!files.length) { setStatus('Keine Bilddateien gefunden.', 'err'); return; }
+    hideResult();
+    let added = 0, failed = 0;
+    for (const file of files) {
+      setStatus(`Foto ${added + failed + 1} von ${files.length} wird übernommen …`);
+      let blob;
+      try { blob = await normalize(file); } catch { failed++; continue; }
+      if (!blob) { failed++; continue; }
+      const it = { id: newId(), blob, url: URL.createObjectURL(blob), rot: 0, name: file.name && !/^image\.\w+$/i.test(file.name) ? file.name : `Foto ${new Date().toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}` };
+      items.push(it); added++;
+      await putItem(it);
+    }
+    await saveOrder();
+    render();
+    if (failed) setStatus(`${added} hinzugefügt, ${failed} nicht lesbar (Format wird nicht unterstützt).`, 'err');
+    else setStatus(`${added} ${added === 1 ? 'Beleg' : 'Belege'} hinzugefügt.`, 'ok');
+  }
+
+  // ---------- Anzeige ----------
+  function render() {
+    grid.replaceChildren();
+    empty.hidden = items.length > 0;
+    count.textContent = `${items.length} ${items.length === 1 ? 'Seite' : 'Seiten'}`;
+    make.disabled = items.length === 0;
+    make.className = items.length ? 'primary' : '';
+    document.querySelector('label[for=cam]').className = items.length ? 'btn' : 'btn primary';
+
+    items.forEach((it, i) => {
+      const card = document.createElement('div');
+      card.className = 'card';
+
+      const thumb = document.createElement('div');
+      thumb.className = 'thumb';
+      thumb.draggable = true;
+      const img = document.createElement('img');
+      img.src = it.url; img.alt = `Beleg ${i + 1}`;
+      img.style.transform = `rotate(${it.rot}deg)`;
+      const num = document.createElement('span');
+      num.className = 'num'; num.textContent = i + 1;
+      thumb.append(img, num);
+
+      const meta = document.createElement('div');
+      meta.className = 'meta'; meta.textContent = it.name; meta.title = it.name;
+
+      const del = btn('✕', 'Entfernen', () => {
+        if (!del.classList.contains('armed')) { del.classList.add('armed'); del.textContent = 'Weg?'; setTimeout(() => { del.classList.remove('armed'); del.textContent = '✕'; }, 3000); return; }
+        URL.revokeObjectURL(it.url); items.splice(i, 1); delItem(it.id); saveOrder(); hideResult(); render();
+      }, false, 'del');
+
+      const tools = document.createElement('div');
+      tools.className = 'tools';
+      tools.append(
+        btn('←', 'Nach vorne', () => move(i, -1), i === 0),
+        btn('↻', 'Drehen', () => { it.rot = (it.rot + 90) % 360; putItem(it); hideResult(); render(); }),
+        btn('→', 'Nach hinten', () => move(i, 1), i === items.length - 1),
+        del
+      );
+
+      thumb.addEventListener('dragstart', e => { dragId = it.id; card.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', it.id); });
+      thumb.addEventListener('dragend', () => { dragId = null; card.classList.remove('dragging'); });
+      card.addEventListener('dragover', e => { if (dragId && dragId !== it.id) { e.preventDefault(); card.classList.add('target'); } });
+      card.addEventListener('dragleave', () => card.classList.remove('target'));
+      card.addEventListener('drop', e => {
+        if (!dragId) return;
+        e.preventDefault(); e.stopPropagation();
+        const from = items.findIndex(x => x.id === dragId), to = items.findIndex(x => x.id === it.id);
+        const [m] = items.splice(from, 1); items.splice(to, 0, m); saveOrder(); hideResult(); render();
+      });
+
+      card.append(thumb, meta, tools);
+      grid.append(card);
+    });
+  }
+
+  function btn(label, title, fn, disabled, cls) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = label; b.title = title; b.setAttribute('aria-label', title);
+    b.disabled = !!disabled; if (disabled) b.style.visibility = 'hidden';
+    if (cls) b.className = cls;
+    b.onclick = fn; return b;
+  }
+  function move(i, d) {
+    const j = i + d; if (j < 0 || j >= items.length) return;
+    [items[i], items[j]] = [items[j], items[i]]; saveOrder(); hideResult(); render();
+  }
+
+  // ---------- Eingaben ----------
+  for (const id of ['pick', 'cam']) $(id).addEventListener('change', e => { const f = [...e.target.files]; e.target.value = ''; if (f.length) addFiles(f); });
+  document.addEventListener('dragover', e => { if (!dragId && e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault(); });
+  document.addEventListener('drop', e => { if (!dragId && e.dataTransfer && e.dataTransfer.files.length) { e.preventDefault(); addFiles(e.dataTransfer.files); } });
+  document.addEventListener('paste', e => { const f = [...(e.clipboardData?.files || [])]; if (f.length) addFiles(f); });
+
+  // ---------- PDF ----------
+  async function prepare(it, maxSide, quality) {
+    const im = await loadImage(it.url);
+    let w = im.naturalWidth, h = im.naturalHeight;
+    const scale = Math.min(1, maxSide / Math.max(w, h));
+    w = Math.round(w * scale); h = Math.round(h * scale);
+    const turned = it.rot % 180 !== 0;
+    const c = document.createElement('canvas');
+    c.width = turned ? h : w; c.height = turned ? w : h;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.translate(c.width / 2, c.height / 2);
+    ctx.rotate(it.rot * Math.PI / 180);
+    ctx.drawImage(im, -w / 2, -h / 2, w, h);
+    return { data: c.toDataURL('image/jpeg', quality), w: c.width, h: c.height };
+  }
+  function safeName() {
+    const base = (fname.value || 'Belege').trim().replace(/\.pdf$/i, '').replace(/[\\/:*?"<>|]+/g, '_') || 'Belege';
+    return base + '.pdf';
+  }
+
+  make.onclick = async () => {
+    if (!window.jspdf) { setStatus('Die PDF-Funktion ist noch nicht geladen. Bitte die App einmal mit Internetverbindung öffnen.', 'err'); return; }
+    const high = $('quality').value === 'high';
+    const maxSide = high ? 3000 : 2000, quality = high ? 0.9 : 0.8;
+    const numbering = $('numbering').checked;
+    const bar = $('bar'), fill = $('barfill');
+    make.disabled = true; bar.hidden = false; fill.style.width = '0';
+    hideResult();
+    let doc = null;
+    try {
+      for (let i = 0; i < items.length; i++) {
+        setStatus(`Seite ${i + 1} von ${items.length} wird erstellt …`);
+        const img = await prepare(items[i], maxSide, quality);
+        const orient = img.w > img.h ? 'l' : 'p';
+        if (!doc) doc = new jspdf.jsPDF({ orientation: orient, unit: 'mm', format: 'a4', compress: true });
+        else doc.addPage('a4', orient);
+        const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
+        const m = 8, bottom = numbering ? 14 : 8;
+        const bw = pw - 2 * m, bh = ph - m - bottom;
+        const s = Math.min(bw / img.w, bh / img.h);
+        const dw = img.w * s, dh = img.h * s;
+        doc.addImage(img.data, 'JPEG', (pw - dw) / 2, m + (bh - dh) / 2, dw, dh, undefined, 'FAST');
+        if (numbering) {
+          doc.setFontSize(9); doc.setTextColor(90);
+          doc.text(`Beleg ${i + 1} / {total}`, pw / 2, ph - 6, { align: 'center' });
+        }
+        fill.style.width = `${Math.round((i + 1) / items.length * 100)}%`;
+        await new Promise(r => setTimeout(r, 0));
+      }
+      if (numbering) doc.putTotalPages('{total}');
+      const blob = doc.output('blob');
+      const name = safeName();
+      lastPdf = { name, file: new File([blob], name, { type: 'application/pdf' }) };
+      const sizeMb = (blob.size / 1048576).toFixed(1).replace('.', ',');
+      $('resFile').textContent = `${name} · ${items.length} ${items.length === 1 ? 'Seite' : 'Seiten'} · ${sizeMb} MB`;
+      $('share').hidden = !(navigator.canShare && navigator.canShare({ files: [lastPdf.file] }));
+      $('result').hidden = false;
+      $('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setStatus('');
+    } catch (err) {
+      setStatus('Beim Erstellen der PDF ist ein Fehler aufgetreten: ' + (err && err.message ? err.message : err), 'err');
+    } finally {
+      make.disabled = items.length === 0;
+      setTimeout(() => { bar.hidden = true; }, 600);
+    }
+  };
+
+  function hideResult() { $('result').hidden = true; lastPdf = null; }
+
+  $('share').onclick = async () => {
+    if (!lastPdf) return;
+    try { await navigator.share({ files: [lastPdf.file], title: lastPdf.name }); }
+    catch (e) { if (e && e.name !== 'AbortError') setStatus('Teilen hat nicht geklappt. Bitte „Speichern“ benutzen.', 'err'); }
+  };
+  $('download').onclick = () => {
+    if (!lastPdf) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(lastPdf.file); a.download = lastPdf.name;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    setStatus(`${lastPdf.name} wird in „Downloads“ gespeichert.`, 'ok');
+  };
+  const newRun = $('newRun');
+  newRun.onclick = async () => {
+    if (!newRun.dataset.armed) { newRun.dataset.armed = '1'; newRun.textContent = 'Wirklich alle Belege entfernen? Nochmal tippen.'; setTimeout(() => { delete newRun.dataset.armed; newRun.textContent = 'Neue Abrechnung beginnen (alle Belege entfernen)'; }, 4000); return; }
+    delete newRun.dataset.armed; newRun.textContent = 'Neue Abrechnung beginnen (alle Belege entfernen)';
+    items.forEach(it => URL.revokeObjectURL(it.url)); items = [];
+    await clearAll(); hideResult(); render(); setStatus('Alle Belege entfernt.', 'ok');
+  };
+
+  // ---------- App-Installation & Offline ----------
+  let installEvt = null;
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; $('install').hidden = false; });
+  $('install').onclick = async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice; installEvt = null; $('install').hidden = true; };
+  window.addEventListener('appinstalled', () => { $('install').hidden = true; });
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+  restore();
+})();
+</script>
+</body>
+</html>
